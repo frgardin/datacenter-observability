@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datacenter Observability Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .status-online { color: #10b981; }
+        .status-offline { color: #ef4444; }
+        .alert-critical { background-color: #fee2e2; border-color: #ef4444; }
+        .alert-warning { background-color: #fef3c7; border-color: #f59e0b; }
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">Datacenter Observability</h1>
+            <p class="text-gray-600">Real-time monitoring of infrastructure metrics</p>
+        </header>
+
+        <!-- Alerts Section -->
+        <section id="alerts-section" class="mb-8 hidden">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Active Alerts</h2>
+            <div id="alerts-container" class="space-y-2"></div>
+        </section>
+
+        <!-- Metrics Overview -->
+        <section class="mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">System Overview</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <h3 class="text-sm font-medium text-gray-500 mb-2">Total Targets</h3>
+                    <p id="total-targets" class="text-2xl font-bold text-gray-800">0</p>
+                </div>
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <h3 class="text-sm font-medium text-gray-500 mb-2">Online</h3>
+                    <p id="online-targets" class="text-2xl font-bold text-green-600">0</p>
+                </div>
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <h3 class="text-sm font-medium text-gray-500 mb-2">Offline</h3>
+                    <p id="offline-targets" class="text-2xl font-bold text-red-600">0</p>
+                </div>
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <h3 class="text-sm font-medium text-gray-500 mb-2">Last Update</h3>
+                    <p id="last-update" class="text-sm font-medium text-gray-800">Never</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Target Metrics -->
+        <section>
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Target Metrics</h2>
+            <div id="metrics-container" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                <!-- Target cards will be dynamically inserted here -->
+            </div>
+        </section>
+    </div>
+
+    <script>
+        class MonitoringDashboard {
+            constructor() {
+                this.metrics = {};
+                this.targets = [];
+                this.alerts = [];
+                this.init();
+            }
+
+            init() {
+                this.loadInitialData();
+                // Auto-refresh every 30 seconds
+                setInterval(() => this.loadInitialData(), 30000);
+            }
+
+            async loadInitialData() {
+                try {
+                    const [metricsResponse, targetsResponse, alertsResponse] = await Promise.all([
+                        fetch('/api/metrics'),
+                        fetch('/api/targets'),
+                        fetch('/api/alerts')
+                    ]);
+
+                    const metrics = await metricsResponse.json();
+                    const targets = await targetsResponse.json();
+                    const alerts = await alertsResponse.json();
+
+                    this.updateMetrics(metrics);
+                    this.updateTargets(targets);
+                    this.updateAlerts(alerts);
+                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+                } catch (error) {
+                    console.error('Failed to load data:', error);
+                }
+            }
+
+            updateMetrics(data) {
+                this.metrics = data;
+                this.renderMetrics();
+            }
+
+            updateTargets(targets) {
+                this.targets = targets;
+                this.updateOverview();
+            }
+
+            updateAlerts(alerts) {
+                this.alerts = alerts;
+                const alertsSection = document.getElementById('alerts-section');
+                const alertsContainer = document.getElementById('alerts-container');
+                
+                if (alerts.length === 0) {
+                    alertsSection.classList.add('hidden');
+                    return;
+                }
+
+                alertsSection.classList.remove('hidden');
+                alertsContainer.innerHTML = '';
+
+                alerts.forEach(alert => {
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = `p-4 rounded-lg border ${alert.level === 'critical' ? 'alert-critical' : 'alert-warning'}`;
+                    alertDiv.innerHTML = `
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <span class="font-semibold">${alert.target}</span>
+                                <span class="text-sm text-gray-600 ml-2">${alert.type.toUpperCase()}</span>
+                                ${alert.mountPoint ? `<span class="text-sm text-gray-600 ml-2">(${alert.mountPoint})</span>` : ''}
+                            </div>
+                            <div class="text-right">
+                                <span class="font-bold">${alert.value.toFixed(1)}%</span>
+                                <span class="text-sm text-gray-600 ml-1">/ ${alert.threshold}%</span>
+                            </div>
+                        </div>
+                    `;
+                    alertsContainer.appendChild(alertDiv);
+                });
+            }
+
+            updateOverview() {
+                const totalCount = this.targets.length;
+                const onlineCount = this.targets.filter(t => t.status === 'online').length;
+                const offlineCount = totalCount - onlineCount;
+                
+                document.getElementById('total-targets').textContent = totalCount;
+                document.getElementById('online-targets').textContent = onlineCount;
+                document.getElementById('offline-targets').textContent = offlineCount;
+            }
+
+            renderMetrics() {
+                const container = document.getElementById('metrics-container');
+                container.innerHTML = '';
+
+                Object.entries(this.metrics).forEach(([targetName, data]) => {
+                    const targetCard = this.createTargetCard(targetName, data);
+                    container.appendChild(targetCard);
+                });
+            }
+
+            createTargetCard(targetName, data) {
+                const card = document.createElement('div');
+                card.className = 'metric-card bg-white rounded-lg shadow p-6';
+                
+                const cpuUsage = data.cpu?.usagePercent || 0;
+                const memUsage = data.memory?.usagePercent || 0;
+                const diskUsage = data.disk?.[0]?.usagePercent || 0;
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">${targetName}</h3>
+                        <span class="status-online font-medium">● Online</span>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <!-- CPU Metrics -->
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-gray-600">CPU Usage</span>
+                                <span class="font-medium">${cpuUsage.toFixed(1)}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="progress-bar bg-blue-600 h-2 rounded-full ${this.getProgressClass(cpuUsage)}" style="width: ${cpuUsage}%"></div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                Load: ${data.cpu?.load1Min?.toFixed(2) || 'N/A'} | Cores: ${data.cpu?.cores || 'N/A'}
+                            </div>
+                        </div>
+
+                        <!-- Memory Metrics -->
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-gray-600">Memory Usage</span>
+                                <span class="font-medium">${memUsage.toFixed(1)}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="progress-bar bg-green-600 h-2 rounded-full ${this.getProgressClass(memUsage)}" style="width: ${memUsage}%"></div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                ${data.memory?.usedMb || 'N/A'}MB / ${data.memory?.totalMb || 'N/A'}MB
+                            </div>
+                        </div>
+
+                        <!-- Disk Metrics -->
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-gray-600">Disk Usage</span>
+                                <span class="font-medium">${diskUsage}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="progress-bar bg-yellow-600 h-2 rounded-full ${this.getProgressClass(diskUsage)}" style="width: ${diskUsage}%"></div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                ${data.disk?.[0]?.mountPoint || 'N/A'} | ${data.disk?.[0]?.used || 'N/A'} / ${data.disk?.[0]?.size || 'N/A'}
+                            </div>
+                        </div>
+
+                        <!-- System Info -->
+                        <div class="text-xs text-gray-500 border-t pt-2">
+                            <div>OS: ${data.system?.osInfo || 'N/A'}</div>
+                            <div>Uptime: ${data.system?.uptime || 'N/A'}</div>
+                        </div>
+                    </div>
+                `;
+
+                return card;
+            }
+
+            getProgressClass(percentage) {
+                if (percentage >= 90) return 'bg-red-600';
+                if (percentage >= 70) return 'bg-yellow-600';
+                return '';
+            }
+        }
+
+        // Initialize dashboard when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new MonitoringDashboard();
+        });
+    </script>
+</body>
+</html>
