@@ -16,7 +16,7 @@ A lightweight system for monitoring CPU, RAM, and disk usage across multiple mac
 ```
 ┌─────────────────┐         ┌─────────────────┐
 │  Observer       │         │  Target Machine │
-│  Machine        │◄───────│  (Agent)        │
+│  Machine        │◄─────── │  (Agent)        │
 │  (Dashboard/API)│  HTTPS  │  - CPU Monitor  │
 │  - Collector    │         │  - RAM Monitor  │
 │  - Database     │         │  - Disk Monitor │
