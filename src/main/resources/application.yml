@@ -1,0 +1,47 @@
+server:
+  port: 8080
+
+observability:
+  targets:
+    - name: "localhost"
+      host: "127.0.0.1"
+      port: 22
+      username: "${USER:system}"
+      password: ""
+      tags:
+        - "local"
+        - "test"
+  
+  collection:
+    interval: 30
+    timeout: 10
+  
+  alerts:
+    cpu:
+      warning: 70
+      critical: 90
+    ram:
+      warning: 80
+      critical: 95
+    disk:
+      warning: 80
+      critical: 90
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  datasource:
+    url: jdbc:h2:mem:observabilitydb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  h2:
+    console:
+      enabled: true
+
+logging:
+  level:
+    com.observability: INFO
+    root: WARN
