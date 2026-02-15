@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.lang.management.ManagementFactory;
+import com.sun.management.OperatingSystemMXBean;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -367,57 +369,6 @@ public class MetricsCollectionService {
     }
 
     private double getCpuUsage() {
-        try {
-            // Simple CPU usage calculation using /proc/stat
-            long startIdle = 0, startTotal = 0;
-
-            Process process = Runtime.getRuntime().exec("cat /proc/stat");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line = reader.readLine();
-            if (line != null && line.startsWith("cpu ")) {
-                String[] parts = line.split("\\s+");
-                if (parts.length >= 5) {
-                    long user = Long.parseLong(parts[1]);
-                    long nice = Long.parseLong(parts[2]);
-                    long system = Long.parseLong(parts[3]);
-                    long idle = Long.parseLong(parts[4]);
-
-                    startIdle = idle;
-                    startTotal = user + nice + system + idle;
-                }
-            }
-            process.waitFor();
-
-            Thread.sleep(1000); // Wait 1 second
-
-            long endIdle = 0, endTotal = 0;
-            process = Runtime.getRuntime().exec("cat /proc/stat");
-            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            line = reader.readLine();
-            if (line != null && line.startsWith("cpu ")) {
-                String[] parts = line.split("\\s+");
-                if (parts.length >= 5) {
-                    long user = Long.parseLong(parts[1]);
-                    long nice = Long.parseLong(parts[2]);
-                    long system = Long.parseLong(parts[3]);
-                    long idle = Long.parseLong(parts[4]);
-
-                    endIdle = idle;
-                    endTotal = user + nice + system + idle;
-                }
-            }
-            process.waitFor();
-
-            long diffIdle = endIdle - startIdle;
-            long diffTotal = endTotal - startTotal;
-
-            if (diffTotal > 0) {
-                return (1.0 - (double) diffIdle / diffTotal) * 100;
-            }
-        } catch (Exception e) {
-            logger.warn("Could not calculate CPU usage: {}", e.getMessage());
-        }
-
-        return 0.0;
+        return ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class).getCpuLoad() * 100.0;
     }
 }
