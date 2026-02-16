@@ -6,6 +6,7 @@
     <title>Datacenter Observability Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
         .metric-card {
             transition: all 0.3s ease;
@@ -20,6 +21,19 @@
         .alert-warning { background-color: #fef3c7; border-color: #f59e0b; }
         .progress-bar {
             transition: width 0.5s ease-in-out;
+        }
+        .chart-container {
+            height: 300px;
+            position: relative;
+            overflow: hidden;
+        }
+        .chart-canvas {
+            height: 100% !important;
+            width: 100% !important;
+            max-height: 300px;
+        }
+        body {
+            overflow-x: hidden;
         }
     </style>
 </head>
@@ -67,6 +81,78 @@
                 <!-- Target cards will be dynamically inserted here -->
             </div>
         </section>
+
+        <!-- Time Series Charts -->
+        <section class="mt-12">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-semibold text-gray-800">Historical Performance</h2>
+                <div class="flex gap-2 items-center">
+                    <div class="flex gap-2">
+                        <select id="time-range" class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                            <option value="1">Last 1 Hour</option>
+                            <option value="6">Last 6 Hours</option>
+                            <option value="24" selected>Last 24 Hours</option>
+                            <option value="168">Last 7 Days</option>
+                        </select>
+                        <select id="target-select" class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                            <option value="all">All Targets</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2 items-center ml-4">
+                        <select id="refresh-rate" class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                            <option value="0">Manual</option>
+                            <option value="1000">1 second</option>
+                            <option value="5000" selected>5 seconds</option>
+                            <option value="10000">10 seconds</option>
+                            <option value="30000">30 seconds</option>
+                            <option value="60000">1 minute</option>
+                            <option value="300000">5 minutes</option>
+                            <option value="600000">10 minutes</option>
+                        </select>
+                        <button id="refresh-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- CPU Chart -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">CPU Usage Over Time</h3>
+                    <div class="chart-container">
+                        <canvas id="cpu-chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Memory Chart -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Memory Usage Over Time</h3>
+                    <div class="chart-container">
+                        <canvas id="memory-chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Load Average Chart -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Load Average Over Time</h3>
+                    <div class="chart-container">
+                        <canvas id="load-chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Disk Usage Chart -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Disk Usage Over Time</h3>
+                    <div class="chart-container">
+                        <canvas id="disk-chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
     </div>
 
     <script>
@@ -75,13 +161,153 @@
                 this.metrics = {};
                 this.targets = [];
                 this.alerts = [];
+                this.charts = {};
+                this.refreshInterval = null;
                 this.init();
             }
 
             init() {
                 this.loadInitialData();
-                // Auto-refresh every 30 seconds
-                setInterval(() => this.loadInitialData(), 30000);
+                this.initializeCharts();
+                this.setupEventListeners();
+                // Set initial refresh rate
+                this.setRefreshRate(60000); // Default 1 minute
+            }
+
+            setupEventListeners() {
+                document.getElementById('time-range').addEventListener('change', () => this.loadHistoricalData());
+                document.getElementById('target-select').addEventListener('change', () => this.loadHistoricalData());
+                document.getElementById('refresh-rate').addEventListener('change', (e) => {
+                    this.setRefreshRate(parseInt(e.target.value));
+                });
+                document.getElementById('refresh-btn').addEventListener('click', () => {
+                    this.manualRefresh();
+                });
+            }
+
+            initializeCharts() {
+                try {
+                    const chartOptions = {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        aspectRatio: 2,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    displayFormats: {
+                                        hour: 'HH:mm',
+                                        day: 'MMM dd'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Time'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Usage (%)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: true
+                            }
+                        }
+                    };
+
+                    // CPU Chart
+                    const cpuCanvas = document.getElementById('cpu-chart');
+                    if (cpuCanvas) {
+                        this.charts.cpu = new Chart(cpuCanvas, {
+                            type: 'line',
+                            data: {
+                                datasets: []
+                            },
+                            options: {
+                                ...chartOptions,
+                                scales: {
+                                    ...chartOptions.scales,
+                                    y: {
+                                        ...chartOptions.scales.y,
+                                        title: { display: true, text: 'CPU Usage (%)' }
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Memory Chart
+                    const memoryCanvas = document.getElementById('memory-chart');
+                    if (memoryCanvas) {
+                        this.charts.memory = new Chart(memoryCanvas, {
+                            type: 'line',
+                            data: {
+                                datasets: []
+                            },
+                            options: {
+                                ...chartOptions,
+                                scales: {
+                                    ...chartOptions.scales,
+                                    y: {
+                                        ...chartOptions.scales.y,
+                                        title: { display: true, text: 'Memory Usage (%)' }
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Load Average Chart
+                    const loadCanvas = document.getElementById('load-chart');
+                    if (loadCanvas) {
+                        this.charts.load = new Chart(loadCanvas, {
+                            type: 'line',
+                            data: {
+                                datasets: []
+                            },
+                            options: {
+                                ...chartOptions,
+                                scales: {
+                                    ...chartOptions.scales,
+                                    y: {
+                                        ...chartOptions.scales.y,
+                                        title: { display: true, text: 'Load Average' }
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Disk Chart
+                    const diskCanvas = document.getElementById('disk-chart');
+                    if (diskCanvas) {
+                        this.charts.disk = new Chart(diskCanvas, {
+                            type: 'line',
+                            data: {
+                                datasets: []
+                            },
+                            options: {
+                                ...chartOptions,
+                                scales: {
+                                    ...chartOptions.scales,
+                                    y: {
+                                        ...chartOptions.scales.y,
+                                        title: { display: true, text: 'Disk Usage (%)' }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    
+                    console.log('Charts initialized successfully');
+                } catch (error) {
+                    console.error('Error initializing charts:', error);
+                }
             }
 
             async loadInitialData() {
@@ -105,6 +331,159 @@
                 }
             }
 
+            async loadHistoricalData() {
+                try {
+                    const timeRange = document.getElementById('time-range').value;
+                    const selectedTarget = document.getElementById('target-select').value;
+                    
+                    let url = `/api/metrics/history?hoursBack=${timeRange}`;
+                    if (selectedTarget !== 'all') {
+                        url = `/api/metrics/${selectedTarget}/history?hoursBack=${timeRange}`;
+                    }
+
+                    console.log('Loading historical data from:', url);
+                    const response = await fetch(url);
+                    const historicalData = await response.json();
+                    
+                    console.log('Historical data received:', historicalData);
+                    this.updateCharts(historicalData);
+                } catch (error) {
+                    console.error('Failed to load historical data:', error);
+                }
+            }
+
+            updateCharts(historicalData) {
+                try {
+                    console.log('Updating charts with data:', historicalData);
+                    
+                    // If no data, create sample data for testing
+                    if (!historicalData || Object.keys(historicalData).length === 0) {
+                        console.log('No historical data available, creating sample data');
+                        historicalData = this.createSampleData();
+                    }
+                    
+                    const colors = [
+                        'rgb(59, 130, 246)',   // blue
+                        'rgb(16, 185, 129)',   // green
+                        'rgb(245, 158, 11)',   // amber
+                        'rgb(239, 68, 68)',    // red
+                        'rgb(139, 92, 246)',   // purple
+                        'rgb(236, 72, 153)'    // pink
+                    ];
+
+                    const processData = (targetName, metrics, key) => {
+                        const processed = metrics.map(m => {
+                            let value = 0;
+                            if (key === 'cpu') {
+                                value = m.cpu?.usagePercent || 0;
+                            } else if (key === 'memory') {
+                                value = m.memory?.usagePercent || 0;
+                            } else if (key === 'load') {
+                                value = m.cpu?.load1Min || 0;
+                            } else if (key === 'disk') {
+                                value = m.disk?.[0]?.usagePercent || 0;
+                            }
+                            
+                            return {
+                                x: new Date(m.timestamp),
+                                y: value
+                            };
+                        });
+                        console.log(`Processed ${key} data for ${targetName}:`, processed);
+                        return processed;
+                    };
+
+                    // Update CPU Chart
+                    if (this.charts.cpu) {
+                        const cpuDatasets = [];
+                        let colorIndex = 0;
+                        for (const [targetName, metrics] of Object.entries(historicalData)) {
+                            cpuDatasets.push({
+                                label: targetName,
+                                data: processData(targetName, metrics, 'cpu'),
+                                borderColor: colors[colorIndex % colors.length],
+                                backgroundColor: colors[colorIndex % colors.length] + '20',
+                                tension: 0.1
+                            });
+                            colorIndex++;
+                        }
+                        this.charts.cpu.data.datasets = cpuDatasets;
+                        this.charts.cpu.update();
+                    }
+
+                    // Update Memory Chart
+                    if (this.charts.memory) {
+                        console.log('Updating Memory Chart...');
+                        const memoryDatasets = [];
+                        colorIndex = 0;
+                        for (const [targetName, metrics] of Object.entries(historicalData)) {
+                            console.log(`Processing memory data for ${targetName}:`, metrics[0]?.memory);
+                            memoryDatasets.push({
+                                label: targetName,
+                                data: processData(targetName, metrics, 'memory'),
+                                borderColor: colors[colorIndex % colors.length],
+                                backgroundColor: colors[colorIndex % colors.length] + '20',
+                                tension: 0.1
+                            });
+                            colorIndex++;
+                        }
+                        this.charts.memory.data.datasets = memoryDatasets;
+                        this.charts.memory.update();
+                        console.log('Memory Chart updated');
+                    } else {
+                        console.error('Memory chart not initialized');
+                    }
+
+                    // Update Load Chart
+                    if (this.charts.load) {
+                        console.log('Updating Load Chart...');
+                        const loadDatasets = [];
+                        colorIndex = 0;
+                        for (const [targetName, metrics] of Object.entries(historicalData)) {
+                            console.log(`Processing load data for ${targetName}:`, metrics[0]?.cpu);
+                            loadDatasets.push({
+                                label: targetName,
+                                data: processData(targetName, metrics, 'load'),
+                                borderColor: colors[colorIndex % colors.length],
+                                backgroundColor: colors[colorIndex % colors.length] + '20',
+                                tension: 0.1
+                            });
+                            colorIndex++;
+                        }
+                        this.charts.load.data.datasets = loadDatasets;
+                        this.charts.load.update();
+                        console.log('Load Chart updated');
+                    } else {
+                        console.error('Load chart not initialized');
+                    }
+
+                    // Update Disk Chart
+                    if (this.charts.disk) {
+                        console.log('Updating Disk Chart...');
+                        const diskDatasets = [];
+                        colorIndex = 0;
+                        for (const [targetName, metrics] of Object.entries(historicalData)) {
+                            console.log(`Processing disk data for ${targetName}:`, metrics[0]?.disk);
+                            diskDatasets.push({
+                                label: targetName,
+                                data: processData(targetName, metrics, 'disk'),
+                                borderColor: colors[colorIndex % colors.length],
+                                backgroundColor: colors[colorIndex % colors.length] + '20',
+                                tension: 0.1
+                            });
+                            colorIndex++;
+                        }
+                        this.charts.disk.data.datasets = diskDatasets;
+                        this.charts.disk.update();
+                        console.log('Disk Chart updated');
+                    } else {
+                        console.error('Disk chart not initialized');
+                    }
+                } catch (error) {
+                    console.error('Error updating charts:', error);
+                }
+            }
+
             updateMetrics(data) {
                 this.metrics = data;
                 this.renderMetrics();
@@ -113,6 +492,108 @@
             updateTargets(targets) {
                 this.targets = targets;
                 this.updateOverview();
+                this.updateTargetSelector();
+                // Load historical data after targets are updated
+                this.loadHistoricalData();
+            }
+
+            updateTargetSelector() {
+                const targetSelect = document.getElementById('target-select');
+                targetSelect.innerHTML = '<option value="all">All Targets</option>';
+                
+                this.targets.forEach(target => {
+                    const option = document.createElement('option');
+                    option.value = target.name;
+                    option.textContent = target.name;
+                    targetSelect.appendChild(option);
+                });
+            }
+
+            setRefreshRate(rateMs) {
+                // Clear existing interval
+                if (this.refreshInterval) {
+                    clearInterval(this.refreshInterval);
+                    this.refreshInterval = null;
+                }
+
+                // Set new interval if rate is greater than 0
+                if (rateMs > 0) {
+                    this.refreshInterval = setInterval(() => {
+                        this.loadInitialData();
+                        this.loadHistoricalData();
+                    }, rateMs);
+                    console.log(`Auto-refresh enabled: ${rateMs / 1000} seconds`);
+                } else {
+                    console.log('Auto-refresh disabled - manual mode');
+                }
+            }
+
+            manualRefresh() {
+                const refreshBtn = document.getElementById('refresh-btn');
+                const originalContent = refreshBtn.innerHTML;
+                
+                // Show loading state
+                refreshBtn.innerHTML = `
+                    <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Refreshing...
+                `;
+                refreshBtn.disabled = true;
+
+                // Perform refresh
+                Promise.all([
+                    this.loadInitialData(),
+                    this.loadHistoricalData()
+                ]).finally(() => {
+                    // Restore button state
+                    refreshBtn.innerHTML = originalContent;
+                    refreshBtn.disabled = false;
+                });
+            }
+
+            createSampleData() {
+                const now = new Date();
+                const sampleData = {
+                    'Sample Target': []
+                };
+                
+                // Generate 24 data points (one per hour for the last 24 hours)
+                for (let i = 23; i >= 0; i--) {
+                    const timestamp = new Date(now.getTime() - (i * 60 * 60 * 1000));
+                    sampleData['Sample Target'].push({
+                        timestamp: timestamp.toISOString(),
+                        cpu: {
+                            usagePercent: Math.random() * 80 + 10, // 10-90%
+                            load1Min: Math.random() * 2 + 0.5, // 0.5-2.5
+                            load5Min: Math.random() * 2 + 0.5,
+                            load15Min: Math.random() * 2 + 0.5,
+                            cores: 4
+                        },
+                        memory: {
+                            totalMb: 8192,
+                            usedMb: Math.floor(Math.random() * 4096 + 2048), // 2048-6144MB
+                            freeMb: 0,
+                            usagePercent: Math.random() * 60 + 30 // 30-90%
+                        },
+                        disk: [{
+                            filesystem: '/dev/sda1',
+                            size: '100G',
+                            used: '50G',
+                            available: '50G',
+                            usagePercent: Math.floor(Math.random() * 40 + 40), // 40-80%
+                            mountPoint: '/'
+                        }],
+                        system: {
+                            hostname: 'sample-host',
+                            uptime: 'up 1 day',
+                            osInfo: 'Sample OS'
+                        }
+                    });
+                }
+                
+                console.log('Created sample data:', sampleData);
+                return sampleData;
             }
 
             updateAlerts(alerts) {

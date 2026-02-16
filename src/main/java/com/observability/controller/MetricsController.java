@@ -2,11 +2,15 @@ package com.observability.controller;
 
 import com.observability.dto.MetricsDTO;
 import com.observability.service.MetricsCollectionService;
+import com.observability.service.HistoricalMetricsService;
 import com.observability.config.ObservabilityConfig;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +22,9 @@ public class MetricsController {
 
     @Autowired
     private MetricsCollectionService metricsCollectionService;
+    
+    @Autowired
+    private HistoricalMetricsService historicalMetricsService;
     
     @Autowired
     private ObservabilityConfig config;
@@ -120,6 +127,37 @@ public class MetricsController {
         }
         
         return ResponseEntity.ok(alerts);
+    }
+
+    // Historical data endpoints
+    @GetMapping("/metrics/{target}/history")
+    public ResponseEntity<List<MetricsDTO>> getTargetHistory(
+            @PathVariable String target,
+            @RequestParam(defaultValue = "24") int hoursBack) {
+        List<MetricsDTO> history = historicalMetricsService.getRecentMetrics(target, hoursBack);
+        return ResponseEntity.ok(history);
+    }
+
+    @GetMapping("/metrics/{target}/history/range")
+    public ResponseEntity<List<MetricsDTO>> getTargetHistoryRange(
+            @PathVariable String target,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+        List<MetricsDTO> history = historicalMetricsService.getHistoricalMetrics(target, startTime, endTime);
+        return ResponseEntity.ok(history);
+    }
+
+    @GetMapping("/metrics/history")
+    public ResponseEntity<Map<String, List<MetricsDTO>>> getAllTargetsHistory(
+            @RequestParam(defaultValue = "24") int hoursBack) {
+        List<MetricsDTO> allHistory = historicalMetricsService.getAllRecentMetrics(hoursBack);
+        Map<String, List<MetricsDTO>> historyByTarget = new HashMap<>();
+        
+        for (MetricsDTO metrics : allHistory) {
+            historyByTarget.computeIfAbsent(metrics.getTarget(), k -> new ArrayList<>()).add(metrics);
+        }
+        
+        return ResponseEntity.ok(historyByTarget);
     }
 
     // DTOs for responses

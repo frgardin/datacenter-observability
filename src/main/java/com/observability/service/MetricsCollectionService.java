@@ -1,20 +1,21 @@
 package com.observability.service;
 
-import com.jcraft.jsch.*;
-import com.observability.config.ObservabilityConfig;
-import com.observability.dto.MetricsDTO;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.lang.management.ManagementFactory;
-import com.sun.management.OperatingSystemMXBean;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
+import com.observability.config.ObservabilityConfig;
+import com.observability.dto.MetricsDTO;
 
 @Service
 public class MetricsCollectionService {
@@ -24,13 +25,24 @@ public class MetricsCollectionService {
     @Autowired
     private ObservabilityConfig config;
 
+    @Autowired
+    private HistoricalMetricsService historicalMetricsService;
+
     public MetricsDTO collectMetrics(ObservabilityConfig.TargetConfig target) {
         try {
+            MetricsDTO metrics;
             if ("localhost".equals(target.getHost()) || "127.0.0.1".equals(target.getHost())) {
-                return collectLocalMetrics(target);
+                metrics = collectLocalMetrics(target);
             } else {
-                return collectRemoteMetrics(target);
+                metrics = collectRemoteMetrics(target);
             }
+
+            // Save metrics to database for historical data
+            if (metrics != null) {
+                historicalMetricsService.saveMetrics(metrics);
+            }
+
+            return metrics;
         } catch (Exception e) {
             logger.error("Failed to collect metrics from {}: {}", target.getName(), e.getMessage());
             return null;
@@ -369,6 +381,57 @@ public class MetricsCollectionService {
     }
 
     private double getCpuUsage() {
-        return ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class).getCpuLoad() * 100.0;
+        try {
+            // Simple CPU usage calculation using /proc/stat
+            long startIdle = 0, startTotal = 0;
+
+            Process process = Runtime.getRuntime().exec("cat /proc/stat");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line = reader.readLine();
+            if (line != null && line.startsWith("cpu ")) {
+                String[] parts = line.split("\\s+");
+                if (parts.length >= 5) {
+                    long user = Long.parseLong(parts[1]);
+                    long nice = Long.parseLong(parts[2]);
+                    long system = Long.parseLong(parts[3]);
+                    long idle = Long.parseLong(parts[4]);
+
+                    startIdle = idle;
+                    startTotal = user + nice + system + idle;
+                }
+            }
+            process.waitFor();
+
+            Thread.sleep(1000); // Wait 1 second
+
+            long endIdle = 0, endTotal = 0;
+            process = Runtime.getRuntime().exec("cat /proc/stat");
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            line = reader.readLine();
+            if (line != null && line.startsWith("cpu ")) {
+                String[] parts = line.split("\\s+");
+                if (parts.length >= 5) {
+                    long user = Long.parseLong(parts[1]);
+                    long nice = Long.parseLong(parts[2]);
+                    long system = Long.parseLong(parts[3]);
+                    long idle = Long.parseLong(parts[4]);
+
+                    endIdle = idle;
+                    endTotal = user + nice + system + idle;
+                }
+            }
+            process.waitFor();
+
+            long diffIdle = endIdle - startIdle;
+            long diffTotal = endTotal - startTotal;
+
+            if (diffTotal > 0) {
+                return (1.0 - (double) diffIdle / diffTotal) * 100;
+            }
+        } catch (Exception e) {
+            logger.warn("Could not calculate CPU usage: {}", e.getMessage());
+        }
+
+        return 0.0;
     }
 }
